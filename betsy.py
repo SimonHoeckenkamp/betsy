@@ -4,61 +4,75 @@ from bs4 import BeautifulSoup
 import numpy as np
 
 
-def get_playergrades_for_team(team, saison, day):
+def scrape_player_grades_for_team(teams, saison, day):
     """
         scrapes kicker.de for individual player grades of the corresponding match day 
+        saves data in csv file and returns grades as numpy array
 
-        input
-        team:   string of teamname
+        input:
+        team:   list of teamnames
         saison: string for saison (eg. )  
         day:    int of game-day
 
-        output
-        returns an (11,) numpy array
+        output:
+        returns an (len(teams), 14) numpy array
     """
+    grades = -np.ones([len(teams), 14])
 
-    source = requests.get("https://www.kicker.de/bundesliga/" + team + "/topspieler-spieltag/" + saison + "/" + "{}".format(day)).text
-    soup = BeautifulSoup(source, 'html.parser')
-    grades = -np.ones([14,])
     i = 0
-
-    for grade in soup.find_all("td", {"class": "kick__table--ranking__master kick__respt-m-w-65 kick__table--ranking__mark"}):
-        grades[i] = float(grade.get_text().replace(",", "."))
+    for team in teams:
+        source = requests.get("https://www.kicker.de/bundesliga/" + team + "/topspieler-spieltag/" + saison + "/" + "{}".format(day)).text
+        soup = BeautifulSoup(source, 'html.parser')
+        j = 0
+        for grade in soup.find_all("td", {"class": "kick__table--ranking__master kick__respt-m-w-65 kick__table--ranking__mark"}):
+            grades[i,j] = float(grade.get_text().replace(",", "."))
+            j = j + 1
+            if j == 14:
+                break
         i = i + 1
-        if i == 14:
-            break
 
+    np.savetxt(saison + "_{}_grades.csv".format(day), grades)
     return grades
 
-def save_grades_to_csv(grades):
-    """"""
+# TODO: refine model (e.g. use individual grades for individual players)
+def predict_team_grades(grades, past_days, result_type="avg"):
+    """
+        predicts the team grades based on input array and number of represented days
+
+        input:
+
+        output:
+        returns numpy array of shape (no. teams, no. grades) (no. grades = 1 for average)
+
+    """
+
+    if result_type != "avg":
+        raise Exception("Result type unknown.")
+
+    grades_pred = np.zeros([len(grades), ])
+
+
+
+    return grades_pred
 
 if __name__ == "__main__":
-    #team = "borussia-dortmund"
-    teams = [
-        "fc-augsburg",
-        "1-fc-union-berlin",
-        "hertha-bsc",
-        "arminia-bielefeld",
-        "vfl-bochum",
-        "borussia-dortmund",
-        "eintracht-frankfurt",
-        "sc-freiburg",
-        "spvgg-greuther-fuerth",
-        "tsg-hoffenheim",
-        "1-fc-koeln",
-        "rb-leipzig",
-        "bayer-04-leverkusen",
-        "1-fsc-mainz-05",
-        "bor-moenchengladbach",
-        "fc-bayern-muenchen",
-        "vfb-stuttgart",
-        "vfl-wolfsburg"
-    ]
 
-    saison = "2021-22"
-    day = 14
-    
-    for team in teams:
-        for grade in get_playergrades_for_team(team, saison, day):
-            print(f"player: {grade}")
+    SAISON = "2021-22"
+    next_day = 15
+
+    #read teamnames from teams.csv
+    teams = []
+    with open("teams.csv", "r") as file:
+        for team in file.readlines():
+            teams.append(team.strip("\n"))
+
+    # read existing grade files
+    team_grades = np.loadtxt(SAISON + "_1_grades.csv")
+    for day in range(1, next_day):
+        day_grades = np.loadtxt(SAISON + "_{}_grades.csv".format(day))
+        team_grades = np.dstack((team_grades, day_grades))
+
+    print(team_grades.shape)
+
+    #for day in range(1,15):
+    #    scrape_player_grades_for_team(teams, SAISON, day)
