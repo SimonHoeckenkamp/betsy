@@ -7,8 +7,8 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 
-
-def scrape_player_grades_for_team(teams, saison, day):
+# TODO: substitute -1 values as nan values
+def scrape_player_grades_for_teams(teams, saison, day):
     """
         scrapes kicker.de for individual player grades of the corresponding match day 
         saves data in csv file and returns grades as numpy array
@@ -38,35 +38,122 @@ def scrape_player_grades_for_team(teams, saison, day):
     np.savetxt(saison + "_{}_grades.csv".format(day), grades)
     return grades
 
-# TODO: refine model (e.g. use individual grades for individual players)
-def predict_team_grades(grades, past_days, result_type="avg"):
+def scrape_goals_for_teams(teams, saison, day):
     """
-        predicts the team grades based on input array and number of represented days
+        scrapes kicker.de of corresponding day for goals of corresponding matchday
 
-        input:
+        input: 
+            teams as list of teamnames
+            saison as string for saison
+            day as int for matchday
 
         output:
-        returns numpy array of shape (no. teams, no. grades) (no. grades = 1 for average)
-
+            goals as numpy array (teamsize, 4) (goals_1st_half, goals_2nd_half, counter_goals_1st_half, counter_goals_2nd_half)
     """
 
-    # check for input parameters
-    if result_type != "avg":
-        raise Exception("Result type unknown.")
+    goals = np.empty([len(teams), 4])
 
-    if past_days > grades.shape[2]:
-        raise Exception("Not enough data points available.")
+    source = requests.get("https://www.kicker.de/bundesliga/spieltag/" + saison + "/" + "{}".format(day)).text
+    soup = BeautifulSoup(source, 'html.parser')
 
-    avg_grades = np.average(grades, axis=1, weights=(grades > 0))
+    #matches = soup.find_all("td", {"class": "kick__table--ranking__master kick__respt-m-w-65 kick__table--ranking__mark"})
 
-    grades_pred = np.zeros([len(grades), ])
+    # get the matches
+    for match in soup.find_all("div", {"class": "kick__v100-gameList__gameRow"}):
 
+        match_text = match.prettify()
 
+        # extract the information of each match (for two teams)
+        # which team played against whom? save data in list
+        match_teams = []
+        match_goals = []
+        for i in range(len(teams)):
+            team_position = match_text.find(teams[i]) 
+            if (team_position > 0):
+                match_teams.append(i)
+                match_teams.append(team_position)
 
-    return grades_pred
+        # extract the goals and add to list
+        for goal in match.find_all("div", {"class": "kick__v100-scoreBoard__scoreHolder__score"}):
+            match_goals.append(int(goal.text))
+
+        # translate lists into numpy array
+        # which team was first? insert the data to numpy array
+        if (match_teams[1] < match_teams[3]):
+            # home-playing team
+            goals[match_teams[0], 0] = match_goals[2]
+            goals[match_teams[0], 1] = match_goals[0]
+            goals[match_teams[0], 2] = match_goals[3]
+            goals[match_teams[0], 3] = match_goals[1]
+            # outside-playing team
+            goals[match_teams[2], 0] = match_goals[3]
+            goals[match_teams[2], 1] = match_goals[1]
+            goals[match_teams[2], 2] = match_goals[2]
+            goals[match_teams[2], 3] = match_goals[0]
+        else:
+            # home-playing team
+            goals[match_teams[2], 0] = match_goals[2]
+            goals[match_teams[2], 1] = match_goals[0]
+            goals[match_teams[2], 2] = match_goals[3]
+            goals[match_teams[2], 3] = match_goals[1]
+            # outside-playing team
+            goals[match_teams[0], 0] = match_goals[3]
+            goals[match_teams[0], 1] = match_goals[1]
+            goals[match_teams[0], 2] = match_goals[2]
+            goals[match_teams[0], 3] = match_goals[0]           
+
+    np.savetxt(saison + "_{}_goals.csv".format(day), goals)
+
+    return goals
+
+# TODO: check for correct input (teams)
+def scrape_matches(teams, saison, day):
+    """
+        scrapes kicker for matches for a specific match day
+
+        input: 
+            teams as list of teamnames (no control instance for right team constellation)
+            saison as string for saison
+            day as int for matchday
+
+        output:
+            matches as list of lists (team1, team2) as team indices
+    """
+
+    matches = []
+
+    source = requests.get("https://www.kicker.de/bundesliga/spieltag/" + saison + "/" + "{}".format(day)).text
+    soup = BeautifulSoup(source, 'html.parser')
+
+    j = 0
+
+    # get the matches
+    for match in soup.find_all("div", {"class": "kick__v100-gameList__gameRow"}):
+
+        match_text = match.prettify()
+
+        # extract the information of each match (for two teams)
+        # which team played against whom? save data in list
+        match_teams = []
+        for i in range(len(teams)):
+            team_position = match_text.find(teams[i]) 
+            if (team_position > 0):
+                match_teams.append(i)
+                match_teams.append(team_position)
+
+        # translate lists into result list
+        # which team was first? home-playing team
+        if (match_teams[1] < match_teams[3]):
+            matches.append([match_teams[0], match_teams[2]])
+        else:
+            matches.append([match_teams[2], match_teams[0]])
+
+        j = j + 1
+
+    return matches
 
 # TODO: make model for all players (not only first 11, simplification)
-def prepare_data(grades, no_players, no_days):
+def prepare_data(grades, goals, no_players, no_days):
     """
         gets player grades of multiple games (the more, the better) and calculates numpy array for X values and y values
         
@@ -74,7 +161,7 @@ def prepare_data(grades, no_players, no_days):
             grades: numpy array (team, players, matchday)
             no_players: int of represented best players in the model
             no_days: int of represented days in the model
-        output: tuple of numpy arrays (X[no. days, no. players]: playergrades, y: mean team_grade)
+        output: list of numpy arrays [X[no. days, no. players]: playergrades, y: mean team_grade, X_last: last data points for next matchday]
     """
     
     X_teams = grades.shape[0]
@@ -82,25 +169,82 @@ def prepare_data(grades, no_players, no_days):
     
     # no. of data points: X_teams*X_days
     # no. of features: no_days*no_players
-    X = np.empty([no_days*no_players, ])
+    X = np.empty([no_days*no_players + goals.shape[1], ])
     y = np.empty([1,])
+    X_last = np.empty([X_teams, no_days*no_players + goals.shape[1]])
+
     i = 0
     for team in range(X_teams):
         for day in range(X_days):
+            # data from player grades
             new_point = grades[team, 0:no_players, day:day+no_days].reshape((no_players*no_days))
-            new_target = np.mean(grades[team,0:11,day+no_days]).reshape((1))
+            # data from goals
+            new_point_goals = goals[team, :, day+no_days-1]
+            # combine the data sources
+            new_point = np.hstack((new_point, new_point_goals))
+
+            # classifier: +1:win, 0:even, -1:lost
+            classifier = 0
+            diff = goals[team, :, day+no_days][1] - goals[team, :, day+no_days][3]
+            if (diff > 0):
+                classifier = 1
+            elif (diff < 0):
+                classifier = -1
+            new_target = np.array([classifier, ])
             
+            # fill the first row
             if i == 0:
                 X = new_point
                 y = new_target
-                i = i + 1
-                continue
+            else:
+                X = np.vstack([X, new_point])
+                y = np.vstack([y, new_target])
 
-            X = np.vstack([X, new_point])
-            y = np.vstack([y, new_target])
             i = i + 1
 
-    return (X, y)
+        if team == 0:
+            X_last = np.hstack((
+                grades[team, 0:no_players, X_days:X_days+no_days].reshape((no_players*no_days)),
+                goals[team, :, X_days+no_days-1]
+                ))
+        else:
+            X_last = np.vstack([
+                X_last, 
+                np.hstack((
+                    grades[team, 0:no_players, X_days:X_days+no_days].reshape((no_players*no_days)),
+                    goals[team, :, X_days+no_days-1]
+                    ))
+                ])
+
+    return [X, y, X_last]
+
+def loss(y_pred, y_test):
+    """ 
+        calcs the loss between predicted and test values
+    """
+
+    acc = 0
+    i = 0
+    for i in range(len(y_pred)):
+        diff = y_pred[i] - y_test[i]
+        if diff != 0:
+            acc = acc + 1
+    acc = acc / len(y_pred)
+    return acc
+
+def predict_match_day(clf, X, teams, matches):
+    """
+        recommends the bets for matchday 
+    """
+
+    # predict the outcomes
+    y_pred = clf.predict(X)
+
+    pred_matches = []
+    for match in matches:
+        pred_matches.append([teams[match[0]], y_pred[match[0]], teams[match[1]], y_pred[match[1]]])
+
+    return pred_matches
 
 if __name__ == "__main__":
 
@@ -116,22 +260,45 @@ if __name__ == "__main__":
     # read existing grade files
     team_grades = np.loadtxt(SAISON + "_1_grades.csv")
     for day in range(2, next_day):
-        day_grades = np.loadtxt(SAISON + "_{}_grades.csv".format(day))
-        team_grades = np.dstack((team_grades, day_grades))
+       day_grades = np.loadtxt(SAISON + "_{}_grades.csv".format(day))
+       team_grades = np.dstack((team_grades, day_grades))
 
-    X, y = prepare_data(team_grades, 11, 3)
+    # read existing goal files
+    team_goals = np.loadtxt(SAISON + "_1_goals.csv")
+    for day in range(2, next_day):
+       day_goals = np.loadtxt(SAISON + "_{}_goals.csv".format(day))
+       team_goals = np.dstack((team_goals, day_goals))
 
-    # run the principal component analysis on data set
-    # TODO: plot the elbow graph for optimal numbers of PC's
-    X_PCA = PCA(n_components=15).fit_transform(X)
+    # training the model
+    data = prepare_data(team_grades, team_goals, 11, 3)
+    X = data[0]
+    y = data[1]
+    X_last = data[2]
 
-    # run the train-test-split
-    X_train, X_test, y_train, y_test = train_test_split(X_PCA, y, test_size=0.33, random_state=42)
+    # dimensionality reduction
+    #pca = PCA(n_components=20).fit(X)
+    #X_PCA = pca.transform(X)
 
+    # train and test
+    #X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.37)
+    # define the model
+    #clf = LogisticRegression(random_state=0, max_iter=1000).fit(X_train, y_train)
+    #y_pred = clf.predict(X_test)
 
-    #predict_team_grades(team_grades, 3)
+    #train the model
+    clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y)
+    # recommend next bets
+    matches = scrape_matches(teams, SAISON, 15)
+    bets = predict_match_day(clf, X_last, teams, matches)
 
-    print(team_grades)
+    for match in bets:
+        if match[1] == -match[3]:
+            if match[1] > match[3]: 
+                print(match[0] + " wins!!!")
+            elif match[1] < match[3]: 
+                print(match[2] + " wins!!!")
+            else:
+                print("even!!!")
 
-    #for day in range(1,15):
-    #    scrape_player_grades_for_team(teams, SAISON, day)
+        #print(match[0] + ": {} --- " + match[2] + ": {}".format(match[1], match[3]))
+
