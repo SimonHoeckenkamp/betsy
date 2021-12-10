@@ -153,6 +153,7 @@ def scrape_matches(teams, saison, day):
     return matches
 
 # TODO: make model for all players (not only first 11, simplification)
+# TODO: separate days (grades and goals)
 def prepare_data(grades, goals, no_players, no_days):
     """
         gets player grades of multiple games (the more, the better) and calculates numpy array for X values and y values
@@ -166,12 +167,13 @@ def prepare_data(grades, goals, no_players, no_days):
     
     X_teams = grades.shape[0]
     X_days = grades.shape[2] - no_days
+    X_goals = goals.shape[1]
     
     # no. of data points: X_teams*X_days
     # no. of features: no_days*no_players
-    X = np.empty([no_days*no_players + goals.shape[1], ])
+    X = np.empty([no_days*no_players + no_days*X_goals, ])
     y = np.empty([1,])
-    X_last = np.empty([X_teams, no_days*no_players + goals.shape[1]])
+    X_last = np.empty([X_teams, no_days*no_players + no_days*X_goals])
 
     i = 0
     for team in range(X_teams):
@@ -179,7 +181,7 @@ def prepare_data(grades, goals, no_players, no_days):
             # data from player grades
             new_point = grades[team, 0:no_players, day:day+no_days].reshape((no_players*no_days))
             # data from goals
-            new_point_goals = goals[team, :, day+no_days-1]
+            new_point_goals = goals[team, :, day:day+no_days].reshape((X_goals*no_days))
             # combine the data sources
             new_point = np.hstack((new_point, new_point_goals))
 
@@ -205,14 +207,14 @@ def prepare_data(grades, goals, no_players, no_days):
         if team == 0:
             X_last = np.hstack((
                 grades[team, 0:no_players, X_days:X_days+no_days].reshape((no_players*no_days)),
-                goals[team, :, X_days+no_days-1]
+                goals[team, :, X_days:X_days+no_days].reshape((X_goals*no_days))
                 ))
         else:
             X_last = np.vstack([
                 X_last, 
                 np.hstack((
                     grades[team, 0:no_players, X_days:X_days+no_days].reshape((no_players*no_days)),
-                    goals[team, :, X_days+no_days-1]
+                    goals[team, :, X_days:X_days+no_days].reshape((X_goals*no_days))
                     ))
                 ])
 
@@ -269,36 +271,54 @@ if __name__ == "__main__":
        day_goals = np.loadtxt(SAISON + "_{}_goals.csv".format(day))
        team_goals = np.dstack((team_goals, day_goals))
 
-    # training the model
-    data = prepare_data(team_grades, team_goals, 11, 3)
-    X = data[0]
-    y = data[1]
-    X_last = data[2]
 
-    # dimensionality reduction
-    #pca = PCA(n_components=20).fit(X)
-    #X_PCA = pca.transform(X)
+    players = [6]
+    days = [4]
 
-    # train and test
-    #X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.37)
-    # define the model
-    #clf = LogisticRegression(random_state=0, max_iter=1000).fit(X_train, y_train)
-    #y_pred = clf.predict(X_test)
+    res_loss = np.empty((len(players), len(days)))
 
-    #train the model
-    clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y)
-    # recommend next bets
-    matches = scrape_matches(teams, SAISON, 15)
-    bets = predict_match_day(clf, X_last, teams, matches)
+    # use for loops for testing multiple settings    
+    for i in range(len(players)):
+        for j in range(len(days)):
+            data = prepare_data(team_grades, team_goals, players[i], days[j])
 
-    for match in bets:
-        if match[1] == -match[3]:
-            if match[1] > match[3]: 
-                print(match[0] + " wins!!!")
-            elif match[1] < match[3]: 
-                print(match[2] + " wins!!!")
-            else:
-                print("even!!!")
+            X = data[0]
+            y = data[1]
+            X_last = data[2]
 
-        #print(match[0] + ": {} --- " + match[2] + ": {}".format(match[1], match[3]))
+            # dimensionality reduction
+            #pca = PCA(n_components=20).fit(X)
+            #X_PCA = pca.transform(X)
+
+            # train and test
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
+            # define the model
+            clf = LogisticRegression(random_state=0, max_iter=1000).fit(X_train, y_train)
+            y_pred = clf.predict(X_test)
+
+            res_loss[i,j] = loss(y_pred, y_test)
+
+            print("-----------------------------------------------------------------------------------------")
+            print("players: {}, days: {}".format(players[i], days[j]))
+            print("loss: {}".format(res_loss[i,j]))
+
+            #train the model for bet recommendation
+            clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y)
+            # recommend next bets
+            matches = scrape_matches(teams, SAISON, 15)
+            bets = predict_match_day(clf, X_last, teams, matches)
+
+            #print the output
+            for match in bets:
+                if match[1] == -match[3]:
+                    if match[1] > match[3]: 
+                        print(match[0] + " wins!!!")
+                    elif match[1] < match[3]: 
+                        print(match[2] + " wins!!!")
+                    else:
+                        print(match[0] + " --- " + match[2] + ": we are even, bitch!!!")
+            print("-----------------------------------------------------------------------------------------")
+
+
+    #np.savetxt("loss.csv", res_loss)
 
