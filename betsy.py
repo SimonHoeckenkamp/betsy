@@ -7,6 +7,8 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 
+from tabulate import tabulate
+
 # TODO: substitute -1 values as nan values
 def scrape_player_grades_for_teams(teams, saison, day):
     """
@@ -303,22 +305,24 @@ if __name__ == "__main__":
             print("loss: {}".format(res_loss[i,j]))
 
             #train the model for bet recommendation
-            clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y)
+            clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y.ravel())
             # recommend next bets
             matches = scrape_matches(teams, SAISON, 15)
             bets = predict_match_day(clf, X_last, teams, matches)
 
             #print the output
+            results =[]
             for match in bets:
                 if match[1] == -match[3]:
                     if match[1] > match[3]: 
-                        print(match[0] + " wins!!!")
+                        results.append([match[0], match[2], match[0]])                        
                     elif match[1] < match[3]: 
-                        print(match[2] + " wins!!!")
+                        results.append([match[0], match[2], match[2]])                        
                     else:
-                        print(match[0] + " --- " + match[2] + ": we are even, bitch!!!")
+                        results.append([match[0], match[2], "even"]) 
+
+            print(tabulate(results, headers=['team 1', 'team 2', 'winner']))
             print("-----------------------------------------------------------------------------------------")
 
 
     #np.savetxt("loss.csv", res_loss)
-
