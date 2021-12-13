@@ -253,13 +253,18 @@ def predict_match_day(clf, X, teams, matches):
 if __name__ == "__main__":
 
     SAISON = "2021-22"
-    next_day = 15
+    next_day = 16
 
     #read teamnames from teams.csv
     teams = []
     with open("teams.csv", "r") as file:
         for team in file.readlines():
             teams.append(team.strip("\n"))
+
+    scrape_player_grades_for_teams(teams, SAISON, next_day-1)
+    print("grades scraped...")
+    scrape_goals_for_teams(teams, SAISON, next_day-1)
+    print("goals scraped...")
 
     # read existing grade files
     team_grades = np.loadtxt(SAISON + "_1_grades.csv")
@@ -307,7 +312,7 @@ if __name__ == "__main__":
             #train the model for bet recommendation
             clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y.ravel())
             # recommend next bets
-            matches = scrape_matches(teams, SAISON, 15)
+            matches = scrape_matches(teams, SAISON, next_day)
             bets = predict_match_day(clf, X_last, teams, matches)
 
             #print the output
