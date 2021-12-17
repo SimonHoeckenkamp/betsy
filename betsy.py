@@ -7,6 +7,8 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 
+from sklearn.neural_network import MLPClassifier
+
 from tabulate import tabulate
 
 # TODO: substitute -1 values as nan values
@@ -253,7 +255,7 @@ def predict_match_day(clf, X, teams, matches):
 if __name__ == "__main__":
 
     SAISON = "2021-22"
-    next_day = 16
+    next_day = 17
 
     #read teamnames from teams.csv
     teams = []
@@ -261,10 +263,12 @@ if __name__ == "__main__":
         for team in file.readlines():
             teams.append(team.strip("\n"))
 
-    scrape_player_grades_for_teams(teams, SAISON, next_day-1)
-    print("grades scraped...")
-    scrape_goals_for_teams(teams, SAISON, next_day-1)
-    print("goals scraped...")
+
+    # uncommend following lines for scraping data for the next match day
+    # scrape_player_grades_for_teams(teams, SAISON, next_day-1)
+    # print("grades scraped...")
+    # scrape_goals_for_teams(teams, SAISON, next_day-1)
+    # print("goals scraped...")
 
     # read existing grade files
     team_grades = np.loadtxt(SAISON + "_1_grades.csv")
@@ -278,13 +282,16 @@ if __name__ == "__main__":
        day_goals = np.loadtxt(SAISON + "_{}_goals.csv".format(day))
        team_goals = np.dstack((team_goals, day_goals))
 
+    # recommend next bets
+    matches = scrape_matches(teams, SAISON, next_day)
 
     players = [6]
     days = [4]
 
-    res_loss = np.empty((len(players), len(days)))
+    score = np.empty((len(players), len(days)))
 
     # use for loops for testing multiple settings    
+    # loop for machine learning with Logistic regression
     for i in range(len(players)):
         for j in range(len(days)):
             data = prepare_data(team_grades, team_goals, players[i], days[j])
@@ -297,22 +304,23 @@ if __name__ == "__main__":
             #pca = PCA(n_components=20).fit(X)
             #X_PCA = pca.transform(X)
 
-            # train and test
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
-            # define the model
-            clf = LogisticRegression(random_state=0, max_iter=1000).fit(X_train, y_train)
-            y_pred = clf.predict(X_test)
-
-            res_loss[i,j] = loss(y_pred, y_test)
+           # Testing the model on data set
+            # run testing algorithm 3 times for averaging the loss
+            no_avg = 3
+            for no in range(no_avg):
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
+                clf = LogisticRegression(random_state=0, max_iter=1000).fit(X_train, y_train.ravel())
+                y_pred = clf.predict(X_test)
+                score[i,j] = score[i,j] + 1 / no_avg * clf.score(X_test, y_test)
 
             print("-----------------------------------------------------------------------------------------")
+            print("Logistic Regression: --- Matchday: {} ---".format(next_day))
             print("players: {}, days: {}".format(players[i], days[j]))
-            print("loss: {}".format(res_loss[i,j]))
+            print("score: {}".format(score[i,j]))
 
             #train the model for bet recommendation
             clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y.ravel())
             # recommend next bets
-            matches = scrape_matches(teams, SAISON, next_day)
             bets = predict_match_day(clf, X_last, teams, matches)
 
             #print the output
@@ -329,5 +337,58 @@ if __name__ == "__main__":
             print(tabulate(results, headers=['team 1', 'team 2', 'winner']))
             print("-----------------------------------------------------------------------------------------")
 
+    # TODO: Refine the neural network with pytorch, temporaly implemented with quick-and-dirty sklearn
+    # use for loops for testing multiple settings (for testing purposes)  
+    # loop for machine learning with neural network
+    for i in range(len(players)):
+        for j in range(len(days)):
+            data = prepare_data(team_grades, team_goals, players[i], days[j])
+
+            score[i,j] = 0
+
+            # Testing the model on data set
+            # run testing algorithm 3 times for averaging the loss
+            no_avg = 3
+            for no in range(no_avg):
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
+                clf = MLPClassifier(
+                    hidden_layer_sizes=(20,20),
+                    activation='tanh', 
+                    alpha= 0.01, 
+                    random_state=0,
+                    max_iter=10000
+                    ).fit(X_train, y_train.ravel())
+                y_pred = clf.predict(X_test)
+                score[i,j] = score[i,j] + 1 / no_avg * clf.score(X_test, y_test)
+
+            print("-----------------------------------------------------------------------------------------")
+            print("Neural Network: --- Matchday: {} ---".format(next_day))
+            print("players: {}, days: {}".format(players[i], days[j]))
+            print("score: {}".format(score[i,j]))
+
+            #train the model for bet recommendation
+            clf = MLPClassifier(
+                hidden_layer_sizes=(20,20), 
+                activation='tanh', 
+                alpha= 0.01, 
+                random_state=0, 
+                max_iter=10000
+                ).fit(X, y.ravel())
+
+            bets = predict_match_day(clf, X_last, teams, matches)
+
+            #print the output
+            results =[]
+            for match in bets:
+                if match[1] == -match[3]:
+                    if match[1] > match[3]: 
+                        results.append([match[0], match[2], match[0]])                        
+                    elif match[1] < match[3]: 
+                        results.append([match[0], match[2], match[2]])                        
+                    else:
+                        results.append([match[0], match[2], "even"]) 
+
+            print(tabulate(results, headers=['team 1', 'team 2', 'winner']))
+            print("-----------------------------------------------------------------------------------------")
 
     #np.savetxt("loss.csv", res_loss)
