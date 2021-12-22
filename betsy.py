@@ -23,7 +23,7 @@ def scrape_and_save_player_grades_for_teams(teams, saison, day):
         saison: string for saison (eg. )  
         day:    int of game-day
 
-        output: none
+        output: bool: True if data scraped from web
     """
 
     # test if directory for saison already exists
@@ -31,7 +31,7 @@ def scrape_and_save_player_grades_for_teams(teams, saison, day):
         os.mkdir(saison)
     # if file exists do not run the webscraper
     if os.path.isfile(saison + "/{}_grades.csv".format(day)):
-        return None
+        return False
 
     grades = -np.ones([len(teams), 14])
 
@@ -48,6 +48,7 @@ def scrape_and_save_player_grades_for_teams(teams, saison, day):
         i = i + 1
 
     np.savetxt(saison + "/{}_grades.csv".format(day), grades)
+    return True
 
 def scrape_and_save_goals_for_teams(teams, saison, day):
     """
@@ -59,7 +60,7 @@ def scrape_and_save_goals_for_teams(teams, saison, day):
             saison as string for saison
             day as int for matchday
 
-        output: none
+        output: bool: True if data scraped from web
     """
 
     # test if directory for saison already exists
@@ -67,7 +68,7 @@ def scrape_and_save_goals_for_teams(teams, saison, day):
         os.mkdir(saison)
     # if file exists do not run the webscraper
     if os.path.isfile(saison + "/{}_goals.csv".format(day)):
-        return None
+        return False
 
     goals = np.empty([len(teams), 4])
 
@@ -121,6 +122,7 @@ def scrape_and_save_goals_for_teams(teams, saison, day):
             goals[match_teams[0], 3] = match_goals[0]           
 
     np.savetxt(saison + "/{}_goals.csv".format(day), goals)
+    return True
 
 # TODO: check for correct input (teams)
 def scrape_matches(teams, saison, day):
@@ -274,7 +276,7 @@ if __name__ == "__main__":
     saisons = ["2019-20","2020-21","2021-22"]
     
     # next match day (predictions are made for this day but no data is scraped)
-    next_day = 17
+    next_day = 18
 
     #read teamnames from teams.csv
     teams = []
@@ -285,34 +287,40 @@ if __name__ == "__main__":
                 new_team.append(line.strip("\n"))
         teams.append(new_team)
 
+    count_grade_scrapes = 0
+    count_goal_scrapes = 0
+
     for saison, team in zip(saisons, teams):
         for day in range(1, MAX_DAYS + 1):
             print("SCRAPING --- saison: " + saison + " - day: {}".format(day), end='\r')
-            scrape_and_save_player_grades_for_teams(team, saison, day)
-            scrape_and_save_goals_for_teams(team, saison, day)
+            if scrape_and_save_player_grades_for_teams(team, saison, day):
+                count_grade_scrapes += 1
+            if scrape_and_save_goals_for_teams(team, saison, day):
+                count_goal_scrapes += 1
             # stop scraping when last match was hit
             if (saison == saisons[-1] and day == next_day - 1):
+                print("SCRAPING --- saison: " + saison + " - day: {} \n \
+                    --- no. of web accesses: grades: {}, goals: {}".format(day, count_grade_scrapes, count_goal_scrapes))
                 break
 
-    print("SCRAPER FINISHED SCRAPING!!!")    
+    #print("SCRAPER FINISHED SCRAPING!!!")    
 
     # read existing grade and goal files, start with the first one
-    team_grades = np.loadtxt(saisons[0] + "_1_grades.csv")
-    team_goals = np.loadtxt(saisons[0] + "_1_goals.csv")
+    team_grades = np.loadtxt(saisons[0] + "/1_grades.csv")
+    team_goals = np.loadtxt(saisons[0] + "/1_goals.csv")
     for saison in saisons:
         for day in range(1, MAX_DAYS + 1):
             # stop when the the next match day should be predicted
             if (saison == saisons[-1] and day == next_day ):
                 break
 
-            day_grades = np.loadtxt(saisons[-1] + "_{}_grades.csv".format(day))
+            day_grades = np.loadtxt(saison + "/{}_grades.csv".format(day))
+            day_goals = np.loadtxt(saison + "/{}_goals.csv".format(day))
             team_grades = np.dstack((team_grades, day_grades))
-
-            day_goals = np.loadtxt(saisons[-1] + "_{}_goals.csv".format(day))
             team_goals = np.dstack((team_goals, day_goals))
 
     # recommend next bets
-    matches = scrape_matches(teams, saisons[-1], next_day)
+    matches = scrape_matches(teams[-1], saisons[-1], next_day)
 
     players = [6]
     days = [4]
@@ -350,7 +358,7 @@ if __name__ == "__main__":
             #train the model for bet recommendation
             clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y.ravel())
             # recommend next bets
-            bets = predict_match_day(clf, X_last, teams, matches)
+            bets = predict_match_day(clf, X_last, teams[-1], matches)
 
             #print the output
             results =[]
@@ -404,7 +412,7 @@ if __name__ == "__main__":
                 max_iter=10000
                 ).fit(X, y.ravel())
 
-            bets = predict_match_day(clf, X_last, teams, matches)
+            bets = predict_match_day(clf, X_last, teams[-1], matches)
 
             #print the output
             results =[]
