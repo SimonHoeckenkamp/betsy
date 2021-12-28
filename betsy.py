@@ -13,12 +13,13 @@ from sklearn.neural_network import MLPClassifier
 from tabulate import tabulate
 
 # TODO: substitute -1 values as nan values
-def scrape_and_save_player_grades_for_teams(teams, saison, day):
+def scrape_and_save_player_grades_for_teams(league, teams, saison, day):
     """
         scrapes kicker.de for individual player grades of the corresponding match day 
         saves data in csv file within corresponding directory
 
         input:
+        league: string of league
         team:   list of teamnames
         saison: string for saison (eg. )  
         day:    int of game-day
@@ -26,18 +27,21 @@ def scrape_and_save_player_grades_for_teams(teams, saison, day):
         output: bool: True if data scraped from web
     """
 
-    # test if directory for saison already exists
-    if not os.path.isdir(saison):
-        os.mkdir(saison)
+    # test if directories/ files exist
+    if not os.path.isdir(league):
+        os.mkdir(league)
+    if not os.path.isdir(league + "/" + saison):
+        os.mkdir(league + "/" + saison)
+
     # if file exists do not run the webscraper
-    if os.path.isfile(saison + "/{}_grades.csv".format(day)):
+    if os.path.isfile(league + "/" + saison + "/{}_grades.csv".format(day)):
         return False
 
     grades = -np.ones([len(teams), 14])
 
     i = 0
     for team in teams:
-        source = requests.get("https://www.kicker.de/bundesliga/" + team + "/topspieler-spieltag/" + saison + "/" + "{}".format(day)).text
+        source = requests.get("https://www.kicker.de/" + league + "/" + team + "/topspieler-spieltag/" + saison + "/" + "{}".format(day)).text
         soup = BeautifulSoup(source, 'html.parser')
         j = 0
         for grade in soup.find_all("td", {"class": "kick__table--ranking__master kick__respt-m-w-65 kick__table--ranking__mark"}):
@@ -47,15 +51,16 @@ def scrape_and_save_player_grades_for_teams(teams, saison, day):
                 break
         i = i + 1
 
-    np.savetxt(saison + "/{}_grades.csv".format(day), grades)
+    np.savetxt(league + "/" + saison + "/{}_grades.csv".format(day), grades)
     return True
 
-def scrape_and_save_goals_for_teams(teams, saison, day):
+def scrape_and_save_goals_for_teams(league, teams, saison, day):
     """
         scrapes kicker.de of corresponding day for goals of corresponding matchday
         saves the data in csv file within corresponding directory
 
         input: 
+            league as string for league
             teams as list of teamnames
             saison as string for saison
             day as int for matchday
@@ -63,16 +68,19 @@ def scrape_and_save_goals_for_teams(teams, saison, day):
         output: bool: True if data scraped from web
     """
 
-    # test if directory for saison already exists
-    if not os.path.isdir(saison):
-        os.mkdir(saison)
+    # test if directories/ files exist
+    if not os.path.isdir(league):
+        os.mkdir(league)
+    if not os.path.isdir(league + "/" + saison):
+        os.mkdir(league + "/" + saison)
+
     # if file exists do not run the webscraper
-    if os.path.isfile(saison + "/{}_goals.csv".format(day)):
+    if os.path.isfile(league + "/" + saison + "/{}_goals.csv".format(day)):
         return False
 
     goals = np.empty([len(teams), 4])
 
-    source = requests.get("https://www.kicker.de/bundesliga/spieltag/" + saison + "/" + "{}".format(day)).text
+    source = requests.get("https://www.kicker.de/" + league + "/spieltag/" + saison + "/" + "{}".format(day)).text
     soup = BeautifulSoup(source, 'html.parser')
 
     #matches = soup.find_all("td", {"class": "kick__table--ranking__master kick__respt-m-w-65 kick__table--ranking__mark"})
@@ -121,15 +129,16 @@ def scrape_and_save_goals_for_teams(teams, saison, day):
             goals[match_teams[0], 2] = match_goals[2]
             goals[match_teams[0], 3] = match_goals[0]           
 
-    np.savetxt(saison + "/{}_goals.csv".format(day), goals)
+    np.savetxt(league + "/" + saison + "/{}_goals.csv".format(day), goals)
     return True
 
 # TODO: check for correct input (teams)
-def scrape_matches(teams, saison, day):
+def scrape_matches(league, teams, saison, day):
     """
         scrapes kicker for matches for a specific match day
 
         input: 
+            league as string for corresponding league
             teams as list of teamnames (no control instance for right team constellation)
             saison as string for saison
             day as int for matchday
@@ -140,7 +149,7 @@ def scrape_matches(teams, saison, day):
 
     matches = []
 
-    source = requests.get("https://www.kicker.de/bundesliga/spieltag/" + saison + "/" + "{}".format(day)).text
+    source = requests.get("https://www.kicker.de/" + league + "/spieltag/" + saison + "/" + "{}".format(day)).text
     soup = BeautifulSoup(source, 'html.parser')
 
     j = 0
@@ -270,19 +279,20 @@ if __name__ == "__main__":
 
     # maximum no. of match days (eg. bundesliga == 34, Premier League == 38)
     MAX_DAYS = 34
+    LEAGUE = "bundesliga" # 2-bundesliga or bundesliga
 
     # following saisons are considered (strings need to correspond to domains)
     # keep the right order or things get messy
     saisons = ["2019-20","2020-21","2021-22"]
-    
+
     # next match day (predictions are made for this day but no data is scraped)
-    next_day = 18
+    next_day = 17
 
     #read teamnames from teams.csv
     teams = []
     for saison in saisons:
         new_team = []
-        with open(saison + "_teams.csv", "r") as file:
+        with open(LEAGUE + "/" + saison + "_teams.csv", "r") as file:
             for line in file.readlines():
                 new_team.append(line.strip("\n"))
         teams.append(new_team)
@@ -293,9 +303,9 @@ if __name__ == "__main__":
     for saison, team in zip(saisons, teams):
         for day in range(1, MAX_DAYS + 1):
             print("SCRAPING --- saison: " + saison + " - day: {}".format(day), end='\r')
-            if scrape_and_save_player_grades_for_teams(team, saison, day):
+            if scrape_and_save_player_grades_for_teams(LEAGUE, team, saison, day):
                 count_grade_scrapes += 1
-            if scrape_and_save_goals_for_teams(team, saison, day):
+            if scrape_and_save_goals_for_teams(LEAGUE, team, saison, day):
                 count_goal_scrapes += 1
             # stop scraping when last match was hit
             if (saison == saisons[-1] and day == next_day - 1):
@@ -306,21 +316,21 @@ if __name__ == "__main__":
     #print("SCRAPER FINISHED SCRAPING!!!")    
 
     # read existing grade and goal files, start with the first one
-    team_grades = np.loadtxt(saisons[0] + "/1_grades.csv")
-    team_goals = np.loadtxt(saisons[0] + "/1_goals.csv")
+    team_grades = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_grades.csv")
+    team_goals = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_goals.csv")
     for saison in saisons:
         for day in range(1, MAX_DAYS + 1):
             # stop when the the next match day should be predicted
             if (saison == saisons[-1] and day == next_day ):
                 break
 
-            day_grades = np.loadtxt(saison + "/{}_grades.csv".format(day))
-            day_goals = np.loadtxt(saison + "/{}_goals.csv".format(day))
+            day_grades = np.loadtxt(LEAGUE + "/" + saison + "/{}_grades.csv".format(day))
+            day_goals = np.loadtxt(LEAGUE + "/" + saison + "/{}_goals.csv".format(day))
             team_grades = np.dstack((team_grades, day_grades))
             team_goals = np.dstack((team_goals, day_goals))
 
     # recommend next bets
-    matches = scrape_matches(teams[-1], saisons[-1], next_day)
+    matches = scrape_matches(LEAGUE, teams[-1], saisons[-1], next_day)
 
     players = [6]
     days = [4]

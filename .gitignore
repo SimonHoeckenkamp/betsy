@@ -8,4 +8,5 @@ share/*
 lib64
 pyvenv.cfg
 
-*.csv
+*goals.csv
+*grades.csv
