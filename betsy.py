@@ -264,16 +264,39 @@ def loss(y_pred, y_test):
 def predict_match_day(clf, X, teams, matches):
     """
         recommends the bets for matchday 
+        returns array of arrays: 
+        team1, result1, proba1, team2, result2, proba2,
     """
 
     # predict the outcomes
     y_pred = clf.predict(X)
+    y_pred_proba = clf.predict_proba(X)
 
     pred_matches = []
     for match in matches:
-        pred_matches.append([teams[match[0]], y_pred[match[0]], teams[match[1]], y_pred[match[1]]])
+        pred_matches.append([teams[match[0]], y_pred[match[0]], np.max(y_pred_proba[match[0]]), teams[match[1]], y_pred[match[1]], np.max(y_pred_proba[match[1]])])
 
     return pred_matches
+
+def set_bets(capital, pred_matches, percentage_cash=0.3):
+    """
+    calculates the individual stocks based on input parameters
+
+    input:
+    capital: double, currents assets in betting platform
+    pred_matches: array of arrays, holds bets from predict_match_day (from multiple models)
+    percentage_cash: double, percentage which is not used bets (default 30%)
+
+    output:
+    bets: array of arrays, recommended bets per match
+    """
+
+    match_count = len(pred_matches)
+    base_bet = capital*(1-percentage_cash)*1/match_count
+
+    # hier geht es weiter: target is recommendations for betted money
+
+    return bets
 
 if __name__ == "__main__":
 
@@ -286,7 +309,7 @@ if __name__ == "__main__":
     saisons = ["2019-20","2020-21","2021-22"]
 
     # next match day (predictions are made for this day but no data is scraped)
-    next_day = 17
+    next_day = 18
 
     #read teamnames from teams.csv
     teams = []
@@ -332,7 +355,7 @@ if __name__ == "__main__":
     # recommend next bets
     matches = scrape_matches(LEAGUE, teams[-1], saisons[-1], next_day)
 
-    players = [6]
+    players = [8]
     days = [4]
 
     score = np.empty((len(players), len(days)))
@@ -373,15 +396,15 @@ if __name__ == "__main__":
             #print the output
             results =[]
             for match in bets:
-                if match[1] == -match[3]:
-                    if match[1] > match[3]: 
-                        results.append([match[0], match[2], match[0]])                        
-                    elif match[1] < match[3]: 
-                        results.append([match[0], match[2], match[2]])                        
+                if match[1] == -match[4]:
+                    if match[1] > match[4]: 
+                        results.append([match[0], match[3], match[2], match[5], match[0]])                        
+                    elif match[1] < match[4]: 
+                        results.append([match[0], match[3], match[2], match[5], match[3]])                        
                     else:
-                        results.append([match[0], match[2], "even"]) 
+                        results.append([match[0], match[3], match[2], match[5], "even"]) 
 
-            print(tabulate(results, headers=['team 1', 'team 2', 'winner']))
+            print(tabulate(results, headers=['team 1', 'team 2', 'prob. 1', 'prob. 2', 'winner']))
             print("-----------------------------------------------------------------------------------------")
 
     # TODO: Refine the neural network with pytorch, temporaly implemented with quick-and-dirty sklearn
@@ -427,15 +450,15 @@ if __name__ == "__main__":
             #print the output
             results =[]
             for match in bets:
-                if match[1] == -match[3]:
-                    if match[1] > match[3]: 
-                        results.append([match[0], match[2], match[0]])                        
-                    elif match[1] < match[3]: 
-                        results.append([match[0], match[2], match[2]])                        
+                if match[1] == -match[4]:
+                    if match[1] > match[4]: 
+                        results.append([match[0], match[3], match[2], match[5], match[0]])                        
+                    elif match[1] < match[4]: 
+                        results.append([match[0], match[3], match[2], match[5], match[3]])                        
                     else:
-                        results.append([match[0], match[2], "even"]) 
+                        results.append([match[0], match[3], match[2], match[5], "even"]) 
 
-            print(tabulate(results, headers=['team 1', 'team 2', 'winner']))
+            print(tabulate(results, headers=['team 1', 'team 2', 'prob. 1', 'prob. 2', 'winner']))
             print("-----------------------------------------------------------------------------------------")
 
     #np.savetxt("loss.csv", res_loss)
