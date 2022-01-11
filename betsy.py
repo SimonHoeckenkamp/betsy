@@ -1,16 +1,16 @@
+from pandas.core.frame import DataFrame
 import requests
 import os
 
 from bs4 import BeautifulSoup
 import numpy as np
+import pandas as pd
 
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 
 from sklearn.neural_network import MLPClassifier
-
-from tabulate import tabulate
 
 # TODO: substitute -1 values as nan values
 def scrape_and_save_player_grades_for_teams(league, teams, saison, day):
@@ -264,8 +264,8 @@ def loss(y_pred, y_test):
 def predict_match_day(clf, X, teams, matches):
     """
         recommends the bets for matchday 
-        returns array of arrays: 
-        team1, result1, proba1, team2, result2, proba2,
+        returns pandas dataframe: 
+        team1, result1, proba1, team2, result2, proba2
     """
 
     # predict the outcomes
@@ -275,27 +275,35 @@ def predict_match_day(clf, X, teams, matches):
     pred_matches = []
     for match in matches:
         pred_matches.append([teams[match[0]], y_pred[match[0]], np.max(y_pred_proba[match[0]]), teams[match[1]], y_pred[match[1]], np.max(y_pred_proba[match[1]])])
+    
+    # fill the dataframe with array data and return the output
+    df_pred_matches = pd.DataFrame(pred_matches, columns=['team 1', 'pred. 1', 'prob. 1', 'team 2', 'pred. 2', 'prob. 2'])
+    return df_pred_matches
 
-    return pred_matches
-
-def set_bets(capital, pred_matches, percentage_cash=0.3):
+def set_bets(capital, percentage_cash, pred_matches):
     """
     calculates the individual stocks based on input parameters
 
     input:
     capital: double, currents assets in betting platform
-    pred_matches: array of arrays, holds bets from predict_match_day (from multiple models)
     percentage_cash: double, percentage which is not used bets (default 30%)
+    pred_matches: pandas dataframe with predicted matches (from multiple models)
+
 
     output:
-    bets: array of arrays, recommended bets per match
+    bets: pandas dataframe with matches with recommended tips
     """
 
-    match_count = len(pred_matches)
-    base_bet = capital*(1-percentage_cash)*1/match_count
+    pred_matches["bet"] = pred_matches["prob. 1"] + pred_matches["prob. 2"]
 
-    # hier geht es weiter: target is recommendations for betted money
+    first = pred_matches.drop_duplicates(subset=["team 1", "pred. 1"])
+    duplicates = pred_matches[pred_matches.duplicated(subset=["team 1", "pred. 1"])]
 
+    print(pd.concat([first, duplicates]).groupby(['team 1', 'pred. 1', 'team 2', 'pred. 2']).sum().reset_index())
+
+    # TODO: weight per match is calculated under "bet"; next step: transform weight into bet
+    
+    
     return bets
 
 if __name__ == "__main__":
@@ -309,7 +317,11 @@ if __name__ == "__main__":
     saisons = ["2019-20","2020-21","2021-22"]
 
     # next match day (predictions are made for this day but no data is scraped)
-    next_day = 18
+    next_day = 19
+
+    # constants for calculating how much money should be betted
+    capital = 45.07
+    percentage_cash = 0.3
 
     #read teamnames from teams.csv
     teams = []
@@ -390,21 +402,11 @@ if __name__ == "__main__":
 
             #train the model for bet recommendation
             clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y.ravel())
-            # recommend next bets
-            bets = predict_match_day(clf, X_last, teams[-1], matches)
-
-            #print the output
-            results =[]
-            for match in bets:
-                if match[1] == -match[4]:
-                    if match[1] > match[4]: 
-                        results.append([match[0], match[3], match[2], match[5], match[0]])                        
-                    elif match[1] < match[4]: 
-                        results.append([match[0], match[3], match[2], match[5], match[3]])                        
-                    else:
-                        results.append([match[0], match[3], match[2], match[5], "even"]) 
-
-            print(tabulate(results, headers=['team 1', 'team 2', 'prob. 1', 'prob. 2', 'winner']))
+            
+            # run the prediction function and print the result ('raw' data)
+            bets_LR = predict_match_day(clf, X_last, teams[-1], matches)
+            bets_LR = bets_LR[bets_LR["pred. 1"] == -bets_LR["pred. 2"]]
+            print(bets_LR)
             print("-----------------------------------------------------------------------------------------")
 
     # TODO: Refine the neural network with pytorch, temporaly implemented with quick-and-dirty sklearn
@@ -445,20 +447,21 @@ if __name__ == "__main__":
                 max_iter=10000
                 ).fit(X, y.ravel())
 
-            bets = predict_match_day(clf, X_last, teams[-1], matches)
-
-            #print the output
-            results =[]
-            for match in bets:
-                if match[1] == -match[4]:
-                    if match[1] > match[4]: 
-                        results.append([match[0], match[3], match[2], match[5], match[0]])                        
-                    elif match[1] < match[4]: 
-                        results.append([match[0], match[3], match[2], match[5], match[3]])                        
-                    else:
-                        results.append([match[0], match[3], match[2], match[5], "even"]) 
-
-            print(tabulate(results, headers=['team 1', 'team 2', 'prob. 1', 'prob. 2', 'winner']))
+            # run the prediction function and print the result ('raw' data)
+            bets_NN = predict_match_day(clf, X_last, teams[-1], matches)
+            bets_NN = bets_NN[bets_NN["pred. 1"] == -bets_NN["pred. 2"]]
+            print(bets_NN)
             print("-----------------------------------------------------------------------------------------")
+
+            bets_total = bets_LR.append(bets_NN)
+
+            #print the recommended bets
+            print("Tip recommendations")
+            print("capital: {}, percentage of cash: {}".format(capital, percentage_cash))
+
+            bets = set_bets(capital, percentage_cash, bets_total)
+            print(bets)
+            print("-----------------------------------------------------------------------------------------")
+
 
     #np.savetxt("loss.csv", res_loss)
