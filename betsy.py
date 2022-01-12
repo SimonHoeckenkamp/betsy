@@ -54,9 +54,10 @@ def scrape_and_save_player_grades_for_teams(league, teams, saison, day):
     np.savetxt(league + "/" + saison + "/{}_grades.csv".format(day), grades)
     return True
 
-def scrape_and_save_goals_for_teams(league, teams, saison, day):
+def scrape_and_save_goals_and_home_match_for_teams(league, teams, saison, day):
     """
         scrapes kicker.de of corresponding day for goals of corresponding matchday
+        and which team had a home match
         saves the data in csv file within corresponding directory
 
         input: 
@@ -75,10 +76,12 @@ def scrape_and_save_goals_for_teams(league, teams, saison, day):
         os.mkdir(league + "/" + saison)
 
     # if file exists do not run the webscraper
-    if os.path.isfile(league + "/" + saison + "/{}_goals.csv".format(day)):
+    if os.path.isfile(league + "/" + saison + "/{}_goals.csv".format(day)) \
+        and os.path.isfile(league + "/" + saison + "/{}_homematch.csv".format(day)):
         return False
 
     goals = np.empty([len(teams), 4])
+    home_match = np.empty([len(teams), 1])
 
     source = requests.get("https://www.kicker.de/" + league + "/spieltag/" + saison + "/" + "{}".format(day)).text
     soup = BeautifulSoup(source, 'html.parser')
@@ -112,24 +115,30 @@ def scrape_and_save_goals_for_teams(league, teams, saison, day):
             goals[match_teams[0], 1] = match_goals[0]
             goals[match_teams[0], 2] = match_goals[3]
             goals[match_teams[0], 3] = match_goals[1]
+            home_match[match_teams[0]] = 1
             # outside-playing team
             goals[match_teams[2], 0] = match_goals[3]
             goals[match_teams[2], 1] = match_goals[1]
             goals[match_teams[2], 2] = match_goals[2]
             goals[match_teams[2], 3] = match_goals[0]
+            home_match[match_teams[2]] = 0
         else:
             # home-playing team
             goals[match_teams[2], 0] = match_goals[2]
             goals[match_teams[2], 1] = match_goals[0]
             goals[match_teams[2], 2] = match_goals[3]
             goals[match_teams[2], 3] = match_goals[1]
+            home_match[match_teams[2]] = 1
             # outside-playing team
             goals[match_teams[0], 0] = match_goals[3]
             goals[match_teams[0], 1] = match_goals[1]
             goals[match_teams[0], 2] = match_goals[2]
             goals[match_teams[0], 3] = match_goals[0]           
+            home_match[match_teams[0]] = 0
 
     np.savetxt(league + "/" + saison + "/{}_goals.csv".format(day), goals)
+    np.savetxt(league + "/" + saison + "/{}_homematch.csv".format(day), home_match)
+
     return True
 
 # TODO: check for correct input (teams)
@@ -181,12 +190,14 @@ def scrape_matches(league, teams, saison, day):
 
 # TODO: make model for all players (not only first 11, simplification)
 # TODO: separate days (grades and goals)
-def prepare_data(grades, goals, no_players, no_days):
+def prepare_data(grades, goals, home_match, no_players, no_days):
     """
         gets player grades of multiple games (the more, the better) and calculates numpy array for X values and y values
         
         input: 
             grades: numpy array (team, players, matchday)
+            goals: numpy array (first half goals, second half goals, first half goals (2nd team), second half goals (2nd team))
+            home_match: numpy array (1,0) for home or outside match
             no_players: int of represented best players in the model
             no_days: int of represented days in the model
         output: list of numpy arrays [X[no. days, no. players]: playergrades, y: mean team_grade, X_last: last data points for next matchday]
@@ -198,9 +209,9 @@ def prepare_data(grades, goals, no_players, no_days):
     
     # no. of data points: X_teams*X_days
     # no. of features: no_days*no_players
-    X = np.empty([no_days*no_players + no_days*X_goals, ])
+    X = np.empty([no_days * (no_players + X_goals + 1), ])
     y = np.empty([1,])
-    X_last = np.empty([X_teams, no_days*no_players + no_days*X_goals])
+    X_last = np.empty([X_teams, no_days * (no_players + X_goals + 1)])
 
     i = 0
     for team in range(X_teams):
@@ -209,8 +220,11 @@ def prepare_data(grades, goals, no_players, no_days):
             new_point = grades[team, 0:no_players, day:day+no_days].reshape((no_players*no_days))
             # data from goals
             new_point_goals = goals[team, :, day:day+no_days].reshape((X_goals*no_days))
+            #data from home matches
+            # TODO: following line needs a fixture: we have a 2D array (teams x days)!
+            new_point_home_match = home_match[team, :, day:day+no_days].reshape((no_days))
             # combine the data sources
-            new_point = np.hstack((new_point, new_point_goals))
+            new_point = np.hstack((new_point, new_point_goals, new_point_home_match))
 
             # classifier: +1:win, 0:even, -1:lost
             classifier = 0
@@ -294,12 +308,18 @@ def set_bets(capital, percentage_cash, pred_matches):
     bets: pandas dataframe with matches with recommended tips
     """
 
-    pred_matches["bet"] = pred_matches["prob. 1"] + pred_matches["prob. 2"]
-
+    #split up the matches; some might be called more than once
+    pred_matches["weight"] = pred_matches["prob. 1"] + pred_matches["prob. 2"]
     first = pred_matches.drop_duplicates(subset=["team 1", "pred. 1"])
     duplicates = pred_matches[pred_matches.duplicated(subset=["team 1", "pred. 1"])]
 
-    print(pd.concat([first, duplicates]).groupby(['team 1', 'pred. 1', 'team 2', 'pred. 2']).sum().reset_index())
+    bets = pd.concat([first, duplicates]).groupby(['team 1', 'pred. 1', 'team 2', 'pred. 2']).sum().reset_index()
+    
+    total_bets = bets["weight"].sum()
+    working_capital = capital * (1 - percentage_cash)
+    factor = working_capital / total_bets
+    # round to next .5 value (looks more human-like)
+    bets["bet"] = round(2 * bets["weight"] * factor) / 2
 
     # TODO: weight per match is calculated under "bet"; next step: transform weight into bet
     
@@ -307,21 +327,21 @@ def set_bets(capital, percentage_cash, pred_matches):
     return bets
 
 if __name__ == "__main__":
-
     # maximum no. of match days (eg. bundesliga == 34, Premier League == 38)
     MAX_DAYS = 34
     LEAGUE = "bundesliga" # 2-bundesliga or bundesliga
 
     # following saisons are considered (strings need to correspond to domains)
     # keep the right order or things get messy
-    saisons = ["2019-20","2020-21","2021-22"]
+    #saisons = ["2019-20","2020-21","2021-22"]
+    saisons = ["2021-22",]
 
     # next match day (predictions are made for this day but no data is scraped)
-    next_day = 19
+    next_day = 3
 
     # constants for calculating how much money should be betted
     capital = 45.07
-    percentage_cash = 0.3
+    percentage_cash = 0.4
 
     #read teamnames from teams.csv
     teams = []
@@ -340,12 +360,12 @@ if __name__ == "__main__":
             print("SCRAPING --- saison: " + saison + " - day: {}".format(day), end='\r')
             if scrape_and_save_player_grades_for_teams(LEAGUE, team, saison, day):
                 count_grade_scrapes += 1
-            if scrape_and_save_goals_for_teams(LEAGUE, team, saison, day):
+            if scrape_and_save_goals_and_home_match_for_teams(LEAGUE, team, saison, day):
                 count_goal_scrapes += 1
             # stop scraping when last match was hit
             if (saison == saisons[-1] and day == next_day - 1):
                 print("SCRAPING --- saison: " + saison + " - day: {} \n \
-                    --- no. of web accesses: grades: {}, goals: {}".format(day, count_grade_scrapes, count_goal_scrapes))
+                    --- no. of web accesses: grades: {}, goals/home matches: {}".format(day, count_grade_scrapes, count_goal_scrapes))
                 break
 
     #print("SCRAPER FINISHED SCRAPING!!!")    
@@ -353,6 +373,7 @@ if __name__ == "__main__":
     # read existing grade and goal files, start with the first one
     team_grades = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_grades.csv")
     team_goals = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_goals.csv")
+    team_home_match = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_homematch.csv")
     for saison in saisons:
         for day in range(1, MAX_DAYS + 1):
             # stop when the the next match day should be predicted
@@ -361,14 +382,16 @@ if __name__ == "__main__":
 
             day_grades = np.loadtxt(LEAGUE + "/" + saison + "/{}_grades.csv".format(day))
             day_goals = np.loadtxt(LEAGUE + "/" + saison + "/{}_goals.csv".format(day))
+            day_home_match = np.loadtxt(LEAGUE + "/" + saison + "/{}_homematch.csv".format(day))
             team_grades = np.dstack((team_grades, day_grades))
             team_goals = np.dstack((team_goals, day_goals))
-
+            # TODO: following line needs a fixture, we need to stack coloumn-wise per day
+            team_home_match = np.concatenate((team_home_match, day_home_match), axis=1)
     # recommend next bets
     matches = scrape_matches(LEAGUE, teams[-1], saisons[-1], next_day)
 
     players = [8]
-    days = [4]
+    days = [1] #back to 4!!!
 
     score = np.empty((len(players), len(days)))
 
@@ -376,7 +399,7 @@ if __name__ == "__main__":
     # loop for machine learning with Logistic regression
     for i in range(len(players)):
         for j in range(len(days)):
-            data = prepare_data(team_grades, team_goals, players[i], days[j])
+            data = prepare_data(team_grades, team_goals, team_home_match, players[i], days[j])
 
             X = data[0]
             y = data[1]
@@ -457,10 +480,11 @@ if __name__ == "__main__":
 
             #print the recommended bets
             print("Tip recommendations")
-            print("capital: {}, percentage of cash: {}".format(capital, percentage_cash))
+            print("capital: {} euros, percentage of cash: {}".format(capital, percentage_cash))
 
             bets = set_bets(capital, percentage_cash, bets_total)
-            print(bets)
+            print(bets.sort_values(by=["bet"]))
+            print("--- betted capital: {} euros".format(bets["bet"].sum()))
             print("-----------------------------------------------------------------------------------------")
 
 
