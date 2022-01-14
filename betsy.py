@@ -200,7 +200,7 @@ def prepare_data(grades, goals, home_match, no_players, no_days):
             home_match: numpy array (1,0) for home or outside match
             no_players: int of represented best players in the model
             no_days: int of represented days in the model
-        output: list of numpy arrays [X[no. days, no. players]: playergrades, y: mean team_grade, X_last: last data points for next matchday]
+        output: list of numpy arrays [X[no. days, no. players]: playergrades, y: mean team_grade, X_last: last data point for next matchday]
     """
     
     X_teams = grades.shape[0]
@@ -222,7 +222,8 @@ def prepare_data(grades, goals, home_match, no_players, no_days):
             new_point_goals = goals[team, :, day:day+no_days].reshape((X_goals*no_days))
             #data from home matches
             # TODO: following line needs a fixture: we have a 2D array (teams x days)!
-            new_point_home_match = home_match[team, :, day:day+no_days].reshape((no_days))
+            # addition: only add the actual day to the data point!!!
+            new_point_home_match = home_match[day+no_days, team]
             # combine the data sources
             new_point = np.hstack((new_point, new_point_goals, new_point_home_match))
 
@@ -235,22 +236,25 @@ def prepare_data(grades, goals, home_match, no_players, no_days):
                 classifier = -1
             new_target = np.array([classifier, ])
             
-            # fill the first row
             if i == 0:
+                # fill the first row
                 X = new_point
                 y = new_target
             else:
+                # add the next data point
                 X = np.vstack([X, new_point])
                 y = np.vstack([y, new_target])
 
             i = i + 1
 
         if team == 0:
+            # data point for the first team
             X_last = np.hstack((
                 grades[team, 0:no_players, X_days:X_days+no_days].reshape((no_players*no_days)),
                 goals[team, :, X_days:X_days+no_days].reshape((X_goals*no_days))
                 ))
         else:
+            # add data point for the next team
             X_last = np.vstack([
                 X_last, 
                 np.hstack((
@@ -323,7 +327,6 @@ def set_bets(capital, percentage_cash, pred_matches):
 
     # TODO: weight per match is calculated under "bet"; next step: transform weight into bet
     
-    
     return bets
 
 if __name__ == "__main__":
@@ -333,11 +336,13 @@ if __name__ == "__main__":
 
     # following saisons are considered (strings need to correspond to domains)
     # keep the right order or things get messy
-    #saisons = ["2019-20","2020-21","2021-22"]
-    saisons = ["2021-22",]
+    saisons = ["2019-20","2020-21","2021-22"]
+    #saisons = ["2021-22",]
 
     # next match day (predictions are made for this day but no data is scraped)
-    next_day = 3
+    #next_day = 3
+    next_day = 19
+
 
     # constants for calculating how much money should be betted
     capital = 45.07
@@ -375,7 +380,7 @@ if __name__ == "__main__":
     team_goals = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_goals.csv")
     team_home_match = np.loadtxt(LEAGUE + "/" + saisons[0] + "/1_homematch.csv")
     for saison in saisons:
-        for day in range(1, MAX_DAYS + 1):
+        for day in range(2, MAX_DAYS + 1):
             # stop when the the next match day should be predicted
             if (saison == saisons[-1] and day == next_day ):
                 break
@@ -386,24 +391,27 @@ if __name__ == "__main__":
             team_grades = np.dstack((team_grades, day_grades))
             team_goals = np.dstack((team_goals, day_goals))
             # TODO: following line needs a fixture, we need to stack coloumn-wise per day
-            team_home_match = np.concatenate((team_home_match, day_home_match), axis=1)
+            team_home_match = np.vstack((team_home_match, day_home_match))
     # recommend next bets
     matches = scrape_matches(LEAGUE, teams[-1], saisons[-1], next_day)
 
     players = [8]
-    days = [1] #back to 4!!!
-
+    #days = [1]
+    days = [4]
+    
     score = np.empty((len(players), len(days)))
 
     # use for loops for testing multiple settings    
     # loop for machine learning with Logistic regression
     for i in range(len(players)):
         for j in range(len(days)):
+            # collect and prepare the data points
             data = prepare_data(team_grades, team_goals, team_home_match, players[i], days[j])
-
             X = data[0]
             y = data[1]
             X_last = data[2]
+            last_home_matches = np.loadtxt(LEAGUE + "/" + saisons[-1] + "/{}_homematch.csv".format(next_day))
+            X_last = np.column_stack((X_last, last_home_matches))
 
             # dimensionality reduction
             #pca = PCA(n_components=20).fit(X)
@@ -437,7 +445,12 @@ if __name__ == "__main__":
     # loop for machine learning with neural network
     for i in range(len(players)):
         for j in range(len(days)):
-            data = prepare_data(team_grades, team_goals, players[i], days[j])
+            data = prepare_data(team_grades, team_goals, team_home_match, players[i], days[j])
+            X = data[0]
+            y = data[1]
+            X_last = data[2]
+            last_home_matches = np.loadtxt(LEAGUE + "/" + saisons[-1] + "/{}_homematch.csv".format(next_day))
+            X_last = np.column_stack((X_last, last_home_matches))
 
             score[i,j] = 0
 
