@@ -1,6 +1,7 @@
 from pandas.core.frame import DataFrame
 import requests
 import os
+import csv
 
 from bs4 import BeautifulSoup
 import numpy as np
@@ -144,7 +145,7 @@ def scrape_and_save_goals_and_home_match_for_teams(league, teams, saison, day):
 # TODO: check for correct input (teams)
 def scrape_matches(league, teams, saison, day):
     """
-        scrapes kicker for matches for a specific match day
+        scrapes kicker for matches for a specific match day (competing teams and home-match-teams)
 
         input: 
             league as string for corresponding league
@@ -153,7 +154,8 @@ def scrape_matches(league, teams, saison, day):
             day as int for matchday
 
         output:
-            matches as list of lists (team1, team2) as team indices
+            matches: as list of lists (team1, team2) as team indices
+            home_matches: numpy array (len(teams), ) shows if a team plays at home or outside
     """
 
     matches = []
@@ -162,6 +164,8 @@ def scrape_matches(league, teams, saison, day):
     soup = BeautifulSoup(source, 'html.parser')
 
     j = 0
+
+    home_match = np.empty((len(teams), ))
 
     # get the matches
     for match in soup.find_all("div", {"class": "kick__v100-gameList__gameRow"}):
@@ -181,12 +185,16 @@ def scrape_matches(league, teams, saison, day):
         # which team was first? home-playing team
         if (match_teams[1] < match_teams[3]):
             matches.append([match_teams[0], match_teams[2]])
+            home_match[match_teams[0]] = 1
+            home_match[match_teams[2]] = 0
         else:
             matches.append([match_teams[2], match_teams[0]])
+            home_match[match_teams[0]] = 0
+            home_match[match_teams[2]] = 1
 
         j = j + 1
 
-    return matches
+    return (matches, home_match)
 
 # TODO: make model for all players (not only first 11, simplification)
 # TODO: separate days (grades and goals)
@@ -298,15 +306,16 @@ def predict_match_day(clf, X, teams, matches):
     df_pred_matches = pd.DataFrame(pred_matches, columns=['team 1', 'pred. 1', 'prob. 1', 'team 2', 'pred. 2', 'prob. 2'])
     return df_pred_matches
 
-def set_bets(capital, percentage_cash, pred_matches):
+# TODO: max_percentage not used - fixture nesessary!
+def set_bets(capital, percentage_cash, max_percentage, pred_matches):
     """
     calculates the individual stocks based on input parameters
 
     input:
     capital: double, currents assets in betting platform
-    percentage_cash: double, percentage which is not used bets (default 30%)
+    percentage_cash: double, percentage which is not used bets
+    max_percentage: double, maximum percentage per title (of capital) 
     pred_matches: pandas dataframe with predicted matches (from multiple models)
-
 
     output:
     bets: pandas dataframe with matches with recommended tips
@@ -319,14 +328,14 @@ def set_bets(capital, percentage_cash, pred_matches):
 
     bets = pd.concat([first, duplicates]).groupby(['team 1', 'pred. 1', 'team 2', 'pred. 2']).sum().reset_index()
     
-    total_bets = bets["weight"].sum()
-    working_capital = capital * (1 - percentage_cash)
-    factor = working_capital / total_bets
-    # round to next .5 value (looks more human-like)
-    bets["bet"] = round(2 * bets["weight"] * factor) / 2
+    bets["weight"] = bets["weight"] / bets["weight"].sum()
+    max_weight = (1 - percentage_cash) * max_percentage
 
-    # TODO: weight per match is calculated under "bet"; next step: transform weight into bet
-    
+    working_capital = capital * (1 - percentage_cash)
+
+    # round to next .5 value (looks more human-like)
+    bets["bet"] = round(2 * bets["weight"] * working_capital) / 2
+
     return bets
 
 if __name__ == "__main__":
@@ -341,12 +350,19 @@ if __name__ == "__main__":
 
     # next match day (predictions are made for this day but no data is scraped)
     #next_day = 3
-    next_day = 19
+    next_day = 22
 
 
     # constants for calculating how much money should be betted
-    capital = 45.07
-    percentage_cash = 0.4
+    capital = 22.16
+    percentage_cash = 0.0
+    max_percentage = 0.2
+
+    # write input data to csv file:
+    # match day, capital, betted percentage of cash, max percentage
+    with open('history.csv', 'a', newline='') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',')
+        writer.writerow(["{}".format(next_day), "{}".format(capital), "{}".format(percentage_cash), "{}".format(max_percentage)])    
 
     #read teamnames from teams.csv
     teams = []
@@ -390,7 +406,7 @@ if __name__ == "__main__":
             day_home_match = np.loadtxt(LEAGUE + "/" + saison + "/{}_homematch.csv".format(day))
             team_grades = np.dstack((team_grades, day_grades))
             team_goals = np.dstack((team_goals, day_goals))
-            # TODO: following line needs a fixture, we need to stack coloumn-wise per day
+            # TODO: following line needs a fixture, we need to stack coloumn-wise per day, works temporarily
             team_home_match = np.vstack((team_home_match, day_home_match))
     # recommend next bets
     matches = scrape_matches(LEAGUE, teams[-1], saisons[-1], next_day)
@@ -410,8 +426,9 @@ if __name__ == "__main__":
             X = data[0]
             y = data[1]
             X_last = data[2]
-            last_home_matches = np.loadtxt(LEAGUE + "/" + saisons[-1] + "/{}_homematch.csv".format(next_day))
-            X_last = np.column_stack((X_last, last_home_matches))
+            #last_home_matches = np.loadtxt(LEAGUE + "/" + saisons[-1] + "/{}_homematch.csv".format(next_day))
+            # append home-matches to the data array
+            X_last = np.column_stack((X_last, matches[1]))
 
             # dimensionality reduction
             #pca = PCA(n_components=20).fit(X)
@@ -435,7 +452,7 @@ if __name__ == "__main__":
             clf = LogisticRegression(random_state=0, max_iter=1000).fit(X, y.ravel())
             
             # run the prediction function and print the result ('raw' data)
-            bets_LR = predict_match_day(clf, X_last, teams[-1], matches)
+            bets_LR = predict_match_day(clf, X_last, teams[-1], matches[0])
             bets_LR = bets_LR[bets_LR["pred. 1"] == -bets_LR["pred. 2"]]
             print(bets_LR)
             print("-----------------------------------------------------------------------------------------")
@@ -449,8 +466,8 @@ if __name__ == "__main__":
             X = data[0]
             y = data[1]
             X_last = data[2]
-            last_home_matches = np.loadtxt(LEAGUE + "/" + saisons[-1] + "/{}_homematch.csv".format(next_day))
-            X_last = np.column_stack((X_last, last_home_matches))
+            #last_home_matches = np.loadtxt(LEAGUE + "/" + saisons[-1] + "/{}_homematch.csv".format(next_day))
+            X_last = np.column_stack((X_last, matches[1]))
 
             score[i,j] = 0
 
@@ -460,7 +477,7 @@ if __name__ == "__main__":
             for no in range(no_avg):
                 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
                 clf = MLPClassifier(
-                    hidden_layer_sizes=(20,20),
+                    hidden_layer_sizes=(5,100), # old: (20,20)
                     activation='tanh', 
                     alpha= 0.01, 
                     random_state=0,
@@ -484,7 +501,7 @@ if __name__ == "__main__":
                 ).fit(X, y.ravel())
 
             # run the prediction function and print the result ('raw' data)
-            bets_NN = predict_match_day(clf, X_last, teams[-1], matches)
+            bets_NN = predict_match_day(clf, X_last, teams[-1], matches[0])
             bets_NN = bets_NN[bets_NN["pred. 1"] == -bets_NN["pred. 2"]]
             print(bets_NN)
             print("-----------------------------------------------------------------------------------------")
@@ -495,7 +512,7 @@ if __name__ == "__main__":
             print("Tip recommendations")
             print("capital: {} euros, percentage of cash: {}".format(capital, percentage_cash))
 
-            bets = set_bets(capital, percentage_cash, bets_total)
+            bets = set_bets(capital, percentage_cash, max_percentage, bets_total)
             print(bets.sort_values(by=["bet"]))
             print("--- betted capital: {} euros".format(bets["bet"].sum()))
             print("-----------------------------------------------------------------------------------------")
