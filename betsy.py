@@ -306,6 +306,30 @@ def predict_match_day(clf, X, teams, matches):
     df_pred_matches = pd.DataFrame(pred_matches, columns=['team 1', 'pred. 1', 'prob. 1', 'team 2', 'pred. 2', 'prob. 2'])
     return df_pred_matches
 
+def filter_predictions(pred_matches, model="raw"):
+    """
+    filters the predictions of the matches according to input parameter
+
+    input:
+    pred_matches: pandas dataframe with predicted matches (from multiple models)
+    model: determines the output ('raw': all pred. points are returned, 'matching': only equal results are returned)
+
+    output:
+    filtered_matches: pandas dataframe with all matches according to model
+    """
+
+    if model == "raw":
+        # all matches are returned
+        filtered_matches = pred_matches
+        return filtered_matches
+    elif model == "matching": 
+        # only matches are returned, where winning team plays against loosing team
+        filtered_matches = pred_matches[pred_matches["pred. 1"] == -pred_matches["pred. 2"]]
+        return filtered_matches
+    else:
+        return None
+
+
 # TODO: max_percentage not used - fixture nesessary!
 def set_bets(capital, percentage_cash, max_percentage, pred_matches):
     """
@@ -355,7 +379,7 @@ if __name__ == "__main__":
 
     # constants for calculating how much money should be betted
     capital = 22.16
-    percentage_cash = 0.0
+    percentage_cash = 0.05
     max_percentage = 0.2
 
     # write input data to csv file:
@@ -453,7 +477,7 @@ if __name__ == "__main__":
             
             # run the prediction function and print the result ('raw' data)
             bets_LR = predict_match_day(clf, X_last, teams[-1], matches[0])
-            bets_LR = bets_LR[bets_LR["pred. 1"] == -bets_LR["pred. 2"]]
+            #bets_LR = bets_LR[bets_LR["pred. 1"] == -bets_LR["pred. 2"]]
             print(bets_LR)
             print("-----------------------------------------------------------------------------------------")
 
@@ -502,11 +526,11 @@ if __name__ == "__main__":
 
             # run the prediction function and print the result ('raw' data)
             bets_NN = predict_match_day(clf, X_last, teams[-1], matches[0])
-            bets_NN = bets_NN[bets_NN["pred. 1"] == -bets_NN["pred. 2"]]
+            #bets_NN = bets_NN[bets_NN["pred. 1"] == -bets_NN["pred. 2"]]
             print(bets_NN)
             print("-----------------------------------------------------------------------------------------")
 
-            bets_total = bets_LR.append(bets_NN)
+            bets_total = filter_predictions(bets_LR.append(bets_NN), model="raw")
 
             #print the recommended bets
             print("Tip recommendations")
