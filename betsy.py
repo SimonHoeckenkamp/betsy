@@ -374,11 +374,11 @@ if __name__ == "__main__":
 
     # next match day (predictions are made for this day but no data is scraped)
     #next_day = 3
-    next_day = 22
+    next_day = 23
 
 
     # constants for calculating how much money should be betted
-    capital = 22.16
+    capital = 20.18
     percentage_cash = 0.05
     max_percentage = 0.2
 
